@@ -273,6 +273,7 @@ class SegmentInjectorModifier(Modifier[SegmentInjectorModifierConfig]):
                         LOGGER.warning(
                             f"Found more than one region to inject patch in, using the first one."
                         )
+                        break
             if not candidate:
                 # uninitialized section like .bss mapped to arbitrary memory range without corresponding
                 # MemoryRegion resource, no patch needed.
@@ -363,10 +364,20 @@ class FastSegmentInjectorModifier(Modifier[SegmentInjectorModifierConfig]):
                 f"bytes @ {hex(segment.vm_address)}",
             )
 
-            # Find and validate target region
-            target_region = MemoryRegion.get_mem_region_with_vaddr_from_sorted(
-                segment.vm_address, sorted_regions
-            )
+            # Find and validate target region, preferably with data
+            target_region = None
+            for mem_view in sorted_regions:
+                # the first region we find should be the largest
+                if mem_view.contains(segment.vm_address):
+                    if not target_region:
+                        target_region = mem_view
+                    elif target_region.resource.get_data_id() is None:
+                        target_region = mem_view
+                    elif target_region.resource.get_data_id():
+                        LOGGER.warning(
+                            f"Found more than one region to inject patch in, using the first one."
+                        )
+                        break
             if target_region is None:
                 raise ValueError(
                     f"Cannot inject patch because the memory region at vaddr "
