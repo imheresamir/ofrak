@@ -2,7 +2,7 @@ import logging
 import os
 import hashlib
 import traceback
-from typing import Any, Dict, Optional, Union, List
+from typing import Any, Callable, Dict, Optional, Union, List
 import pyghidra
 import argparse
 import time
@@ -33,6 +33,7 @@ def unpack(
     base_address: Union[str, int, None] = None,
     memory_regions: Optional[List[Dict[str, Any]]] = None,
     show_progress: bool = False,
+    post_analysis_script: Optional[Callable] = None,
 ):
     try:
         LOGGER.info("Analyzing program. This might take a while.")
@@ -110,6 +111,9 @@ def unpack(
                 )
                 program.setImageBase(new_base_addr, True)
                 LOGGER.info(f"Rebased program address to {hex(base_address)}")
+
+            if post_analysis_script is not None:
+                post_analysis_script(flat_api)
 
             main_dictionary: Dict[str, Any] = {}
             code_regions = _unpack_program(flat_api)

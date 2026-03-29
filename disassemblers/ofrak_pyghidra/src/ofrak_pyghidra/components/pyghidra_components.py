@@ -129,6 +129,9 @@ class PyGhidraAutoAnalyzer(Analyzer[None, PyGhidraAutoLoadProject]):
         super().__init__(resource_factory, data_service, resource_service)
         self.analysis_store = analysis_store
 
+    def post_analysis_script(self, flat_api) -> None:
+        """Override in subclasses to run custom Ghidra code after analysis."""
+
     async def analyze(self, resource: Resource, config: PyGhidraAnalyzerConfig = None):
         tempdir = mkdtemp(prefix="rbs-pyghidra-bin")
         await resource.identify()  # useful for checking tags later
@@ -147,7 +150,13 @@ class PyGhidraAutoAnalyzer(Analyzer[None, PyGhidraAutoLoadProject]):
         for tag in _GHIDRA_AUTO_LOADABLE_FORMATS:
             if resource.has_tag(tag):
                 self.analysis_store.store_analysis(
-                    resource.get_id(), unpack(program_file, decomp, language)
+                    resource.get_id(),
+                    unpack(
+                        program_file,
+                        decomp,
+                        language,
+                        post_analysis_script=self.post_analysis_script,
+                    ),
                 )
                 return PyGhidraAutoLoadProject()
 
@@ -165,6 +174,7 @@ class PyGhidraAutoAnalyzer(Analyzer[None, PyGhidraAutoLoadProject]):
                 decomp,
                 language=_arch_info_to_processor_id(program_attrs),
                 base_address=base_address,
+                post_analysis_script=self.post_analysis_script,
             ),
         )
         return PyGhidraAutoLoadProject()
@@ -193,6 +203,9 @@ class PyGhidraCustomLoadAnalyzer(Analyzer[None, PyGhidraCustomLoadProject]):
     ):
         super().__init__(resource_factory, data_service, resource_service)
         self.analysis_store = analysis_store
+
+    def post_analysis_script(self, flat_api) -> None:
+        """Override in subclasses to run custom Ghidra code after analysis."""
 
     async def analyze(self, resource: Resource, config: PyGhidraAnalyzerConfig):
         if config is None:
@@ -224,7 +237,13 @@ class PyGhidraCustomLoadAnalyzer(Analyzer[None, PyGhidraCustomLoadProject]):
 
         self.analysis_store.store_analysis(
             resource.get_id(),
-            unpack(None, decomp, language=language, memory_regions=memory_regions),
+            unpack(
+                None,
+                decomp,
+                language=language,
+                memory_regions=memory_regions,
+                post_analysis_script=self.post_analysis_script,
+            ),
         )
         return PyGhidraCustomLoadProject()
 
