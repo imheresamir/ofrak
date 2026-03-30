@@ -33,7 +33,6 @@ from ofrak_cached_disassembly.components.cached_disassembly_unpacker import (
 from ofrak_pyghidra.standalone.pyghidra_analysis import unpack, decompile_all_functions
 from ofrak_type.error import NotFoundError
 
-
 _GHIDRA_AUTO_LOADABLE_FORMATS = [Elf, Ihex, Pe]
 
 
@@ -265,6 +264,10 @@ class PyGhidraCodeRegionUnpacker(CachedCodeRegionUnpacker):
     id = b"PyGhidraCodeRegionUnpacker"
 
     async def unpack(self, resource: Resource, config: PyGhidraCodeRegionUnpackerConfig = None):
+        await self._ensure_pyghidra_analysis_exists(config, resource)
+        return await super().unpack(resource, config)
+
+    async def _ensure_pyghidra_analysis_exists(self, config, resource):
         program_r = await resource.get_only_ancestor(ResourceFilter.with_tags(PyGhidraProject))
         if not self.analysis_store.id_exists(program_r.get_id()):
             if config is not None:
@@ -287,7 +290,6 @@ class PyGhidraCodeRegionUnpacker(CachedCodeRegionUnpacker):
                 raise ValueError(
                     f"resource {resource} does not have any tag that allow analysis with the PyGhidra backend."
                 )
-        return await super().unpack(resource, config)
 
 
 class PyGhidraComplexBlockUnpacker(CachedComplexBlockUnpacker):
