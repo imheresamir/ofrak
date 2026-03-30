@@ -556,6 +556,37 @@ def decompile_all_functions(program_file, language, project_location=None, proje
         return func_to_decomp
 
 
+def decompile_function(program_file, language, virtual_address, project_location=None, project_name=None):
+    """Decompile a single function by virtual address, returning its C source."""
+    with pyghidra.open_program(
+        program_file,
+        language=language,
+        project_location=project_location,
+        project_name=project_name,
+        analyze=False,
+    ) as flat_api:
+        from ghidra.app.decompiler import DecompInterface, DecompileOptions
+        from ghidra.util.task import TaskMonitor
+
+        program = flat_api.getCurrentProgram()
+        addr = program.getAddressFactory().getDefaultAddressSpace().getAddress(virtual_address)
+        func = program.getFunctionManager().getFunctionContaining(addr)
+        if func is None:
+            raise RuntimeError(f"No function found at 0x{virtual_address:x}")
+
+        decomp = DecompInterface()
+        options = DecompileOptions()
+        options.grabFromProgram(program)
+        decomp.setOptions(options)
+        decomp.openProgram(program)
+
+        cb_key = f"func_{func.getEntryPoint().getOffset()}"
+        result = decomp.decompileFunction(func, 0, TaskMonitor.DUMMY)
+        if not result.decompileCompleted():
+            raise RuntimeError(f"Unable to decompile function at 0x{virtual_address:x}")
+        return cb_key, result.getDecompiledFunction().getC()
+
+
 def _get_last_address(func, flat_api):
     end_addr = None
     address_iter = func.getBody().getAddressRanges()

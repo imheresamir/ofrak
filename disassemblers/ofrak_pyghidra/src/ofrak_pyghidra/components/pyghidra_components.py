@@ -32,7 +32,7 @@ from ofrak_cached_disassembly.components.cached_disassembly_unpacker import (
     CachedGhidraCodeRegionModifier,
     CachedDecompilationAnalyzer,
 )
-from ofrak_pyghidra.standalone.pyghidra_analysis import unpack, decompile_all_functions
+from ofrak_pyghidra.standalone.pyghidra_analysis import unpack, decompile_all_functions, decompile_function
 from ofrak_type.error import NotFoundError
 
 _GHIDRA_AUTO_LOADABLE_FORMATS = [Elf, Ihex, Pe]
@@ -348,13 +348,14 @@ class PyGhidraDecompilationAnalyzer(CachedDecompilationAnalyzer):
                 project_location = analysis["metadata"].get("project_location")
                 project_name = analysis["metadata"].get("project_name")
                 open_start = time.time()
-                LOGGER.warning("Starting to decompile functions")
-                for cb_key, decomp in decompile_all_functions(
+                LOGGER.warning(f"Decompiling function at 0x{complex_block.virtual_address:x}")
+                cb_key, decomp = decompile_function(
                     program_file, None,
+                    complex_block.virtual_address,
                     project_location=project_location,
                     project_name=project_name,
-                ).items():
-                    analysis[cb_key]["decompilation"] = decomp
+                )
+                analysis[cb_key]["decompilation"] = decomp
                 self.analysis_store.store_analysis(program_r.get_id(), analysis)
                 LOGGER.warning(f"Decompilation complete: {time.time() - open_start:.1f}s")
 
