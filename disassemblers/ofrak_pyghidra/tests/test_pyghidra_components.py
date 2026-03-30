@@ -233,7 +233,7 @@ async def test_pyghidra_standalone_unpack_decompiled():
 
 async def test_pyghidra_standalone_decompile_all_functions():
     """
-    Test standalone decompile all functions function.
+    Test standalone decompile all functions.
 
     This test verifies that:
     - All functions in a binary are properly decompiled

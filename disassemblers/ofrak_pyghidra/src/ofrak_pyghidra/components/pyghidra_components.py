@@ -1,3 +1,5 @@
+import logging
+import time
 from dataclasses import dataclass
 from tempfile312 import mkdtemp
 import os
@@ -34,6 +36,8 @@ from ofrak_pyghidra.standalone.pyghidra_analysis import unpack, decompile_all_fu
 from ofrak_type.error import NotFoundError
 
 _GHIDRA_AUTO_LOADABLE_FORMATS = [Elf, Ihex, Pe]
+
+LOGGER = logging.getLogger("ofrak_pyghidra")
 
 
 @dataclass
@@ -264,7 +268,9 @@ class PyGhidraCodeRegionUnpacker(CachedCodeRegionUnpacker):
     id = b"PyGhidraCodeRegionUnpacker"
 
     async def unpack(self, resource: Resource, config: PyGhidraCodeRegionUnpackerConfig = None):
+        open_start = time.time()
         await self._ensure_pyghidra_analysis_exists(config, resource)
+        LOGGER.warning(f"Pyghidra Analysis time: {time.time() - open_start:.1f}s")
         return await super().unpack(resource, config)
 
     async def _ensure_pyghidra_analysis_exists(self, config, resource):
@@ -339,9 +345,19 @@ class PyGhidraDecompilationAnalyzer(CachedDecompilationAnalyzer):
             analysis = self.analysis_store.get_analysis(program_r.get_id())
             if "decompilation" not in analysis[cb_key]:
                 program_file = analysis["metadata"]["path"]
-                for cb_key, decomp in decompile_all_functions(program_file, None).items():
+                project_location = analysis["metadata"].get("project_location")
+                project_name = analysis["metadata"].get("project_name")
+                open_start = time.time()
+                LOGGER.warning("Starting to decompile functions")
+                for cb_key, decomp in decompile_all_functions(
+                    program_file, None,
+                    project_location=project_location,
+                    project_name=project_name,
+                ).items():
                     analysis[cb_key]["decompilation"] = decomp
                 self.analysis_store.store_analysis(program_r.get_id(), analysis)
+                LOGGER.warning(f"Decompilation complete: {time.time() - open_start:.1f}s")
+
         else:
             tempdir = mkdtemp(prefix="rbs-pyghidra-bin")
             program_file = os.path.join(tempdir, "program")

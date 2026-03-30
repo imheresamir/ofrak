@@ -1,6 +1,7 @@
 import logging
 import os
 import hashlib
+import shutil
 import traceback
 from typing import Any, Callable, Dict, Optional, Union, List
 import pyghidra
@@ -14,6 +15,9 @@ from tqdm import tqdm
 
 LOGGER = logging.getLogger("ofrak_pyghidra")
 
+_DEFAULT_CACHE_DIR = os.path.join(os.path.expanduser("~"), ".cache", "ofrak-pyghidra")
+PYGHIDRA_CACHE_DIR = os.environ.get("OFRAK_PYGHIDRA_CACHE_DIR", _DEFAULT_CACHE_DIR)
+
 
 class PyGhidraComponentException(Exception):
     pass
@@ -24,6 +28,23 @@ def _parse_offset(java_object):
     This parses the offset as a big int
     """
     return int(str(java_object.getOffsetAsBigInteger()))
+
+
+def _compute_cache_key(program_file, language, memory_regions, base_address):
+    """Compute a stable MD5 hash from all inputs that affect Ghidra analysis."""
+    h = hashlib.md5()
+    if program_file and os.path.exists(program_file):
+        with open(program_file, "rb") as f:
+            h.update(f.read())
+    if language:
+        h.update(language.encode())
+    if base_address is not None:
+        h.update(str(base_address).encode())
+    if memory_regions:
+        for region in sorted(memory_regions, key=lambda r: r["virtual_address"]):
+            h.update(region["virtual_address"].to_bytes(8, "big"))
+            h.update(region["data"])
+    return h.hexdigest()
 
 
 def unpack(
@@ -37,16 +58,43 @@ def unpack(
 ):
     try:
         LOGGER.info("Analyzing program. This might take a while.")
-        if not program_file and memory_regions and len(memory_regions) > 0:
-            # In the case the user passed memory regions and no program_file,
-            # we still have to pass a file to pyghidra.open_program, so create a dummy one
-            # Data is populated later from the memory regions data.
-            tempdir = mkdtemp(prefix="rbs-pyghidra-bin")
-            program_file = os.path.join(tempdir, "program")
-            with open(program_file, "wb") as f:
-                f.write(b"\x00")
-        with pyghidra.open_program(program_file, language=language) as flat_api:
-            LOGGER.info("Analysis completed. Caching analysis to JSON")
+
+        # --- Cache lookup ---
+        cache_key = _compute_cache_key(program_file, language, memory_regions, base_address)
+        cache_dir = PYGHIDRA_CACHE_DIR
+        os.makedirs(cache_dir, exist_ok=True)
+
+        project_name = f"{cache_key}_ghidra"
+        project_dir = os.path.join(cache_dir, project_name)
+        gpr_file = os.path.join(project_dir, f"{project_name}.gpr")
+        cached = os.path.exists(gpr_file)
+
+        # Ensure a stable program_file exists in the cache dir
+        cached_program = os.path.join(cache_dir, cache_key)
+        if not os.path.exists(cached_program):
+            if program_file and os.path.exists(program_file):
+                shutil.copy2(program_file, cached_program)
+            else:
+                with open(cached_program, "wb") as f:
+                    f.write(b"\x00")
+        program_file = cached_program
+
+        if cached:
+            LOGGER.warning(f"Cache HIT: reusing Ghidra project {cache_key}")
+        else:
+            LOGGER.warning(f"Cache MISS: creating new Ghidra project {cache_key}")
+
+        open_start = time.time()
+        with pyghidra.open_program(
+            program_file,
+            language=language,
+            project_location=cache_dir,
+            project_name=project_name,
+            analyze=not cached,
+        ) as flat_api:
+            open_elapsed = time.time() - open_start
+            LOGGER.warning(f"Ghidra project opened in {open_elapsed:.1f}s")
+            LOGGER.warning("Extracting analysis to JSON")
             # Java packages must be imported after pyghidra.start or pyghidra.open_program
             from ghidra.app.decompiler import DecompInterface, DecompileOptions
             from ghidra.util.task import TaskMonitor
@@ -55,8 +103,9 @@ def unpack(
             from java.math import BigInteger
             from java.io import ByteArrayInputStream
 
-            # If memory_regions are provided, delete all data and create new regions:
-            if memory_regions:
+            # If memory_regions are provided and this is a fresh project,
+            # delete all data and create new regions:
+            if not cached and memory_regions:
                 program = flat_api.getCurrentProgram()
                 memory = program.getMemory()
                 address_factory = program.getAddressFactory()
@@ -91,11 +140,10 @@ def unpack(
                         logging.warning(
                             f"Failed to create memory block at 0x{region['virtual_address']:x}: {e}"
                         )
-                # Analyze all
-                analysis_mgr = program.getOptions("Analyzers")
                 flat_api.analyzeAll(program)
-            # If base_address is provided, rebase the program
-            if base_address is not None:
+
+            # If base_address is provided, rebase the program (only on fresh project)
+            if not cached and base_address is not None:
                 # Convert base_address to int if it's a string
                 if isinstance(base_address, str):
                     if base_address.startswith("0x"):
@@ -112,6 +160,7 @@ def unpack(
                 program.setImageBase(new_base_addr, True)
                 LOGGER.info(f"Rebased program address to {hex(base_address)}")
 
+            # post_analysis_script always runs (even on cache hit)
             if post_analysis_script is not None:
                 post_analysis_script(flat_api)
 
@@ -121,6 +170,8 @@ def unpack(
             main_dictionary["metadata"]["backend"] = "ghidra"
             main_dictionary["metadata"]["decompiled"] = decompiled
             main_dictionary["metadata"]["path"] = program_file
+            main_dictionary["metadata"]["project_location"] = cache_dir
+            main_dictionary["metadata"]["project_name"] = project_name
             if base_address is not None:
                 main_dictionary["metadata"]["base_address"] = base_address
             with open(program_file, "rb") as fh:
@@ -479,8 +530,14 @@ def _decompile(func, decomp_interface, task_monitor):
     return decomp
 
 
-def decompile_all_functions(program_file, language):
-    with pyghidra.open_program(program_file, language=language) as flat_api:
+def decompile_all_functions(program_file, language, project_location=None, project_name=None):
+    with pyghidra.open_program(
+        program_file,
+        language=language,
+        project_location=project_location,
+        project_name=project_name,
+        analyze=False,
+    ) as flat_api:
         from ghidra.app.decompiler import DecompInterface, DecompileOptions
         from ghidra.util.task import TaskMonitor
 
