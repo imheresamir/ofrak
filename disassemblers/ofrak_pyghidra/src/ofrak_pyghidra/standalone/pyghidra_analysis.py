@@ -70,6 +70,7 @@ async def prepare_project(
         "language": language,
     }
 
+
 def _unpack_program(flat_api):
     ghidra_code_regions = []
     for memory_block in flat_api.getMemoryBlocks():

@@ -11,8 +11,14 @@ import pyghidra
 from ofrak import Modifier
 from ofrak.component.analyzer import Analyzer
 from ofrak.component.identifier import Identifier
-from ofrak.core import CodeRegion, CodeRegionUnpacker, BasicBlock, DataWord, BasicBlockUnpacker, \
-    Instruction
+from ofrak.core import (
+    CodeRegion,
+    CodeRegionUnpacker,
+    BasicBlock,
+    DataWord,
+    BasicBlockUnpacker,
+    Instruction,
+)
 from ofrak.core.architecture import ProgramAttributes
 from ofrak.core.complex_block import ComplexBlock, ComplexBlockUnpacker
 from ofrak.core.decompilation import DecompilationAnalysis, DecompilationAnalyzer
@@ -31,7 +37,8 @@ from ofrak.service.resource_service_i import ResourceFilter, ResourceServiceInte
 from ofrak_pyghidra.standalone.pyghidra_analysis import _unpack_program, _unpack_code_region
 from ofrak_pyghidra.standalone.pyghidra_analysis import (
     prepare_project,
-    _unpack_complex_block, _unpack_basic_block,
+    _unpack_complex_block,
+    _unpack_basic_block,
 )
 from ofrak_type import ArchInfo, Endianness, InstructionSet, InstructionSetMode
 from ofrak_type.error import NotFoundError
@@ -89,7 +96,7 @@ class PyGhidraUnpackerConfig(ComponentConfig):
 class PyGhidraAnalysisStore(AbstractOfrakService):
     def __init__(self):
         super().__init__()
-        self._cache: Dict[str: Dict[str, str]]
+        self._cache: Dict[str : Dict[str, str]]
         self._open_handles: Dict[bytes, Tuple] = {}
         self._lock = threading.Lock()
         self._base_address: Dict[bytes, int] = {}
@@ -114,7 +121,6 @@ class PyGhidraAnalysisStore(AbstractOfrakService):
         memory_regions: Optional[List[Dict[str, Any]]] = None,
         post_analysis_script: Optional[Callable] = None,
     ) -> Tuple:
-
         # --- Cache lookup ---
         project_params = await prepare_project(resource, language, base_address, memory_regions)
 
@@ -178,8 +184,7 @@ class PyGhidraAnalysisStore(AbstractOfrakService):
                     block.setRead(True)
                 except Exception as e:
                     logging.warning(
-                        f"Failed to create memory block at "
-                        f"0x{region['virtual_address']:x}: {e}"
+                        f"Failed to create memory block at " f"0x{region['virtual_address']:x}: {e}"
                     )
             flat_api.analyzeAll(program)
 
@@ -192,9 +197,7 @@ class PyGhidraAnalysisStore(AbstractOfrakService):
 
             program = flat_api.getCurrentProgram()
             address_factory = program.getAddressFactory()
-            new_base_addr = address_factory.getDefaultAddressSpace().getAddress(
-                hex(base_address)
-            )
+            new_base_addr = address_factory.getDefaultAddressSpace().getAddress(hex(base_address))
             program.setImageBase(new_base_addr, True)
             LOGGER.info(f"Rebased program address to {hex(base_address)}")
 
@@ -228,7 +231,6 @@ class PyGhidraAnalysisStore(AbstractOfrakService):
                 ctx.__exit__(None, None, None)
             except Exception as e:
                 LOGGER.warning(e)
-                pass
 
     def close_all(self):
         """Close all open project handles."""
@@ -277,7 +279,8 @@ class PyGhidraCodeRegionModifier(Modifier[None]):
         ghidra_code_regions = _unpack_program(flat_api)
         filtered_code_region = [
             CodeRegion(virtual_address=mem_region["virtual_address"], size=mem_region["size"])
-            for mem_region in ghidra_code_regions if mem_region["executable"]
+            for mem_region in ghidra_code_regions
+            if mem_region["executable"]
         ]
 
         ofrak_code_regions = sorted(ofrak_code_regions, key=lambda cr: cr.virtual_address)
@@ -314,9 +317,10 @@ class PyGhidraCodeRegionModifier(Modifier[None]):
                             code_region.resource.add_view(backend_cr)
                             self.analysis_store.set_base_address(
                                 program_r.get_id(),
-                                backend_cr.virtual_address - code_region.virtual_address
+                                backend_cr.virtual_address - code_region.virtual_address,
                             )
                 await resource.save()
+
 
 @dataclass
 class PyGhidraAnalyzerConfig(ComponentConfig):
@@ -354,7 +358,6 @@ class PyGhidraAutoAnalyzer(Analyzer[None, PyGhidraAutoLoadProject]):
         """Override in subclasses to run custom Ghidra code after analysis."""
 
     async def analyze(self, resource: Resource, config: PyGhidraAnalyzerConfig = None):
-
         if not self.analysis_store.get_flat_api(resource.get_id()):
             await resource.identify()  # Creates tags
             try:
@@ -384,7 +387,7 @@ class PyGhidraAutoAnalyzer(Analyzer[None, PyGhidraAutoLoadProject]):
                 resource,
                 language,
                 base_address=base_address,
-                post_analysis_script=self.post_analysis_script
+                post_analysis_script=self.post_analysis_script,
             )
         return PyGhidraAutoLoadProject()
 
@@ -449,7 +452,7 @@ class PyGhidraCustomLoadAnalyzer(Analyzer[None, PyGhidraCustomLoadProject]):
                 resource,
                 language,
                 memory_regions=memory_regions,
-                post_analysis_script=self.post_analysis_script
+                post_analysis_script=self.post_analysis_script,
             )
         return PyGhidraCustomLoadProject()
 
@@ -572,8 +575,10 @@ class PyGhidraComplexBlockUnpacker(ComplexBlockUnpacker):
 
         complex_block = await resource.view_as(ComplexBlock)
         program = flat_api.getCurrentProgram()
-        addr = program.getAddressFactory().getDefaultAddressSpace().getAddress(
-            hex(complex_block.virtual_address)
+        addr = (
+            program.getAddressFactory()
+            .getDefaultAddressSpace()
+            .getAddress(hex(complex_block.virtual_address))
         )
         func = flat_api.getFunctionAt(addr)
         if func is None:
@@ -581,21 +586,16 @@ class PyGhidraComplexBlockUnpacker(ComplexBlockUnpacker):
         if func is None:
             raise ValueError("Could not get func")
         bb_model = BasicBlockModel(flat_api.getCurrentProgram())
-        basic_blocks, data_words = _unpack_complex_block(
-            func, flat_api, bb_model, BigInteger.ONE
-        )
+        basic_blocks, data_words = _unpack_complex_block(func, flat_api, bb_model, BigInteger.ONE)
 
         children = []
         for block, bb in basic_blocks:
             if bb["size"] == 0:
-                raise Exception(
-                    f"Basic block 0x{bb['virtual_address']:x} has no size"
-                )
+                raise Exception(f"Basic block 0x{bb['virtual_address']:x} has no size")
 
             if (
-                    bb["virtual_address"] < complex_block.virtual_address
-                    or (bb["virtual_address"] + bb["size"])
-                    > complex_block.end_vaddr()
+                bb["virtual_address"] < complex_block.virtual_address
+                or (bb["virtual_address"] + bb["size"]) > complex_block.end_vaddr()
             ):
                 LOGGER.warning(
                     f"Basic Block 0x{bb['virtual_address']:x} does not fall "
@@ -618,9 +618,8 @@ class PyGhidraComplexBlockUnpacker(ComplexBlockUnpacker):
             )
         for data_word in data_words:
             if (
-                    data_word["virtual_address"] < complex_block.virtual_address
-                    or (data_word["virtual_address"] + data_word["size"])
-                    > complex_block.end_vaddr()
+                data_word["virtual_address"] < complex_block.virtual_address
+                or (data_word["virtual_address"] + data_word["size"]) > complex_block.end_vaddr()
             ):
                 LOGGER.warning(
                     f"Data Word 0x{data_word['virtual_address']:x} does not fall "
@@ -630,7 +629,7 @@ class PyGhidraComplexBlockUnpacker(ComplexBlockUnpacker):
                 )
                 continue
             fmt_string = (
-                    program_attributes.endianness.get_struct_flag() + data_word["format_string"]
+                program_attributes.endianness.get_struct_flag() + data_word["format_string"]
             )
             children.append(
                 DataWord(
@@ -680,8 +679,10 @@ class PyGhidraBasicBlockUnpacker(BasicBlockUnpacker):
 
         program = flat_api.getCurrentProgram()
         bb_model = BasicBlockModel(flat_api.getCurrentProgram())
-        addr = program.getAddressFactory().getDefaultAddressSpace().getAddress(
-            hex(bb_view.virtual_address)
+        addr = (
+            program.getAddressFactory()
+            .getDefaultAddressSpace()
+            .getAddress(hex(bb_view.virtual_address))
         )
         block = bb_model.getCodeBlockAt(addr, flat_api.monitor)
         instructions = _unpack_basic_block(block, flat_api, RefType, BigInteger.ONE)
@@ -737,7 +738,11 @@ class PyGhidraDecompilationAnalyzer(DecompilationAnalyzer):
         from ghidra.util.task import TaskMonitor
 
         program = flat_api.getCurrentProgram()
-        addr = program.getAddressFactory().getDefaultAddressSpace().getAddress(complex_block.virtual_address)
+        addr = (
+            program.getAddressFactory()
+            .getDefaultAddressSpace()
+            .getAddress(complex_block.virtual_address)
+        )
         func = program.getFunctionManager().getFunctionContaining(addr)
         if func is None:
             raise RuntimeError(f"No function found at 0x{complex_block.virtual_address:x}")
@@ -750,7 +755,9 @@ class PyGhidraDecompilationAnalyzer(DecompilationAnalyzer):
 
         result = decomp.decompileFunction(func, 0, TaskMonitor.DUMMY)
         if not result.decompileCompleted():
-            raise RuntimeError(f"Unable to decompile function at 0x{complex_block.virtual_address:x}")
+            raise RuntimeError(
+                f"Unable to decompile function at 0x{complex_block.virtual_address:x}"
+            )
         resource.add_tag(DecompilationAnalysis)
         return DecompilationAnalysis(result.getDecompiledFunction().getC())
 
