@@ -94,24 +94,56 @@ class PyGhidraUnpackerConfig(ComponentConfig):
 
 
 class PyGhidraAnalysisStore(AbstractOfrakService):
+    """
+    Manages open Ghidra project handles, keyed by a content-derived cache_key
+    (MD5 of binary + language + base_address + memory_regions).  Multiple OFRAK
+    resource IDs can share the same Ghidra project / JVM context; the project is
+    only closed when its last resource detaches.
+    """
+
     def __init__(self):
         super().__init__()
-        self._cache: Dict[str : Dict[str, str]]
-        self._open_handles: Dict[bytes, Tuple] = {}
         self._lock = threading.Lock()
-        self._base_address: Dict[bytes, int] = {}
+
+        # cache_key -> (flat_api, ctx)
+        self._projects: Dict[str, Tuple] = {}
+        # cache_key -> set of resource_ids currently using this project
+        self._project_refs: Dict[str, set] = {}
+
+        # resource_id -> cache_key
+        self._resource_to_project: Dict[bytes, str] = {}
+
+        self._base_address: Dict[str, int] = {}
+
+    # ------------------------------------------------------------------
+    # Lookups
+    # ------------------------------------------------------------------
 
     def get_flat_api(self, resource_id: bytes):
         """Return the cached flat_api for a resource, or None."""
         with self._lock:
-            entry = self._open_handles.get(resource_id)
+            cache_key = self._resource_to_project.get(resource_id)
+            if cache_key is None:
+                return None
+            entry = self._projects.get(cache_key)
             return entry[0] if entry is not None else None
 
     def set_base_address(self, _id: bytes, address: int):
-        self._base_address[_id] = address
+        with self._lock:
+            cache_key = self._resource_to_project.get(_id)
+        if cache_key is not None:
+            self._base_address[cache_key] = address
 
     def get_base_address(self, _id: bytes) -> Optional[int]:
-        return self._base_address.get(_id)
+        with self._lock:
+            cache_key = self._resource_to_project.get(_id)
+        if cache_key is None:
+            return None
+        return self._base_address.get(cache_key)
+
+    # ------------------------------------------------------------------
+    # Project lifecycle
+    # ------------------------------------------------------------------
 
     async def create_project(
         self,
@@ -121,17 +153,31 @@ class PyGhidraAnalysisStore(AbstractOfrakService):
         memory_regions: Optional[List[Dict[str, Any]]] = None,
         post_analysis_script: Optional[Callable] = None,
     ) -> Tuple:
-        # --- Cache lookup ---
         project_params = await prepare_project(resource, language, base_address, memory_regions)
 
+        cache_key = project_params["cache_key"]
         program_file = project_params["program_file"]
         cache_dir = project_params["project_location"]
         project_name = project_params["project_name"]
         cached = project_params["cached"]
+        resource_id = resource.get_id()
+
+        with self._lock:
+            if cache_key in self._projects:
+                self._project_refs[cache_key].add(resource_id)
+                self._resource_to_project[resource_id] = cache_key
+                flat_api = self._projects[cache_key][0]
+                LOGGER.warning(
+                    "Reusing already-open Ghidra project for resource %s (cache_key=%s, refs=%d)",
+                    resource_id.hex(),
+                    cache_key[:12],
+                    len(self._project_refs[cache_key]),
+                )
+                return flat_api
 
         open_start = time.time()
         if cached:
-            LOGGER.warning("Cache HIT: reusing Ghidra project")
+            LOGGER.warning("Cache HIT: reusing Ghidra project on disk")
         else:
             LOGGER.warning("Cache MISS: creating new Ghidra project")
         ctx = pyghidra.open_program(
@@ -145,86 +191,105 @@ class PyGhidraAnalysisStore(AbstractOfrakService):
         open_elapsed = time.time() - open_start
         LOGGER.warning(f"Ghidra project opened in {open_elapsed:.1f}s")
 
-        if cached:
-            self._open_handles[resource.get_id()] = (flat_api, ctx)
-            LOGGER.warning("Returning cached project")
-            return flat_api
+        if not cached:
+            from ghidra.util.task import TaskMonitor
+            from java.io import ByteArrayInputStream
 
-        from ghidra.util.task import TaskMonitor
-        from java.io import ByteArrayInputStream
+            if memory_regions:
+                program = flat_api.getCurrentProgram()
+                memory = program.getMemory()
+                address_factory = program.getAddressFactory()
+                default_space = address_factory.getDefaultAddressSpace()
 
-        if memory_regions:
-            program = flat_api.getCurrentProgram()
-            memory = program.getMemory()
-            address_factory = program.getAddressFactory()
-            default_space = address_factory.getDefaultAddressSpace()
+                for block in memory.getBlocks():
+                    memory.removeBlock(block, TaskMonitor.DUMMY)
 
-            for block in memory.getBlocks():
-                memory.removeBlock(block, TaskMonitor.DUMMY)
+                for region in memory_regions:
+                    addr = default_space.getAddress(region["virtual_address"])
+                    data_bytes = region["data"]
+                    block_name = f"region_{region['virtual_address']:x}"
 
-            for region in memory_regions:
-                addr = default_space.getAddress(region["virtual_address"])
-                data_bytes = region["data"]
-                block_name = f"region_{region['virtual_address']:x}"
+                    try:
+                        input_stream = ByteArrayInputStream(data_bytes)
 
-                try:
-                    input_stream = ByteArrayInputStream(data_bytes)
+                        memory.createInitializedBlock(
+                            block_name,
+                            addr,
+                            input_stream,
+                            len(data_bytes),
+                            TaskMonitor.DUMMY,
+                            False,
+                        )
 
-                    memory.createInitializedBlock(
-                        block_name,
-                        addr,
-                        input_stream,
-                        len(data_bytes),
-                        TaskMonitor.DUMMY,
-                        False,
-                    )
+                        block = memory.getBlock(addr)
+                        block.setExecute(True)
+                        block.setRead(True)
+                    except Exception as e:
+                        logging.warning(
+                            f"Failed to create memory block at "
+                            f"0x{region['virtual_address']:x}: {e}"
+                        )
+                flat_api.analyzeAll(program)
 
-                    block = memory.getBlock(addr)
-                    block.setExecute(True)
-                    block.setRead(True)
-                except Exception as e:
-                    logging.warning(
-                        f"Failed to create memory block at " f"0x{region['virtual_address']:x}: {e}"
-                    )
-            flat_api.analyzeAll(program)
+            if base_address:
+                if isinstance(base_address, str):
+                    if base_address.startswith("0x"):
+                        base_address = int(base_address, 16)
+                    else:
+                        base_address = int(base_address)
 
-        if base_address:
-            if isinstance(base_address, str):
-                if base_address.startswith("0x"):
-                    base_address = int(base_address, 16)
-                else:
-                    base_address = int(base_address)
+                program = flat_api.getCurrentProgram()
+                address_factory = program.getAddressFactory()
+                new_base_addr = address_factory.getDefaultAddressSpace().getAddress(
+                    hex(base_address)
+                )
+                program.setImageBase(new_base_addr, True)
+                LOGGER.info(f"Rebased program address to {hex(base_address)}")
 
-            program = flat_api.getCurrentProgram()
-            address_factory = program.getAddressFactory()
-            new_base_addr = address_factory.getDefaultAddressSpace().getAddress(hex(base_address))
-            program.setImageBase(new_base_addr, True)
-            LOGGER.info(f"Rebased program address to {hex(base_address)}")
+            if post_analysis_script:
+                post_analysis_script(flat_api)
 
-        if post_analysis_script:
-            post_analysis_script(flat_api)
+            LOGGER.warning("Flushing Ghidra project to reload")
+            ctx.__exit__(None, None, None)
+            ctx = pyghidra.open_program(
+                program_file,
+                language=language,
+                project_location=cache_dir,
+                project_name=project_name,
+                analyze=False,
+            )
+            flat_api = ctx.__enter__()
+            LOGGER.warning("Reloaded Ghidra project")
 
-        # Close to flush all modifications (memory regions, rebasing, analysis) to disk
-        LOGGER.warning("Flushing Ghidra project to reload")
-        ctx.__exit__(None, None, None)
-        # Reopen the now-cached project for continued use
-        ctx = pyghidra.open_program(
-            program_file,
-            language=language,
-            project_location=cache_dir,
-            project_name=project_name,
-            analyze=False,
-        )
-        flat_api = ctx.__enter__()
-        LOGGER.warning("Reloaded Ghidra project")
-        self._open_handles[resource.get_id()] = (flat_api, ctx)
+        with self._lock:
+            self._projects[cache_key] = (flat_api, ctx)
+            self._project_refs.setdefault(cache_key, set()).add(resource_id)
+            self._resource_to_project[resource_id] = cache_key
 
         return flat_api
 
     def close_program(self, resource_id: bytes):
-        """Close a specific open project handle."""
+        """Detach a resource from its project.  Closes the project only when
+        the last resource using it detaches."""
         with self._lock:
-            entry = self._open_handles.pop(resource_id, None)
+            cache_key = self._resource_to_project.pop(resource_id, None)
+            if cache_key is None:
+                return
+            refs = self._project_refs.get(cache_key)
+            if refs is not None:
+                refs.discard(resource_id)
+            if refs is not None and len(refs) > 0:
+                LOGGER.warning(
+                    "Resource %s detached from project %s (%d refs remain)",
+                    resource_id.hex(),
+                    cache_key[:12],
+                    len(refs),
+                )
+                return
+            self._project_refs.pop(cache_key, None)
+            entry = self._projects.pop(cache_key, None)
+            self._base_address.pop(cache_key, None)
+
         if entry is not None:
             _, ctx = entry
             try:
@@ -234,11 +299,11 @@ class PyGhidraAnalysisStore(AbstractOfrakService):
 
     def close_all(self):
         """Close all open project handles."""
-        for rid in list(self._open_handles.keys()):
+        for rid in list(self._resource_to_project.keys()):
             self.close_program(rid)
 
     async def shutdown(self):
-        LOGGER.warning("SHITTING DOWN NOW!")
+        LOGGER.warning("SHUTTING DOWN NOW!")
         return self.close_all()
 
     def __del__(self):  # pragma: no cover
