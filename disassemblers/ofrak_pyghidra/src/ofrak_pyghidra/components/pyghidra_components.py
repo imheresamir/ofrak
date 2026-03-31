@@ -580,7 +580,8 @@ class PyGhidraCodeRegionUnpacker(CodeRegionUnpacker):
         LOGGER.warning(f"Pyghidra Analysis time: {time.time() - open_start:.1f}s")
 
     async def _get_or_create_flat_api(self, config, resource):
-        program_r = await resource.get_only_ancestor(ResourceFilter.with_tags(PyGhidraProject))
+        program_r = await resource.get_only_ancestor(ResourceFilter.with_tags(Program))
+        await program_r.identify()  # Enusre PyGhidra Project tags are applied
         flat_api = self.analysis_store.get_flat_api(program_r.get_id())
         if not flat_api:
             if config is not None:
