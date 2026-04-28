@@ -1,0 +1,3 @@
+[submodule "ofrak_core/keystone"]
+	path = ofrak_core/keystone
+	url = https://github.com/imheresamir/keystone.git
