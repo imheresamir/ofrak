@@ -81,7 +81,7 @@ setuptools.setup(
         "intervaltree>=3.1.0",
         "keystone-engine>=0.9.2",
         "jefferson>=0.4.5;python_version>='3.8'",
-        "lief>=0.16.1",
+        "lief>=0.17.6",
         "lz4>=4.4.4",
         "ofrak_io>=1.1.3,==1.*",
         "ofrak_type>=2.3.0,==2.*",
