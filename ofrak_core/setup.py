@@ -71,7 +71,7 @@ setuptools.setup(
     install_requires=[
         "aiohttp>=3.13.3",
         "aiohttp-cors~=0.7.0",
-        "beartype~=0.20.0",
+        "beartype~=0.22.9",
         "bincopy>=20.0.0",
         "black>=23.3.0",
         "cryptography>=44.0.3",
