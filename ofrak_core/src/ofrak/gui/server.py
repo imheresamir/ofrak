@@ -10,7 +10,7 @@ import logging
 from ofrak.project.project import OfrakProject
 
 import typing_inspect
-from typing_inspect import get_args
+from typing import get_args
 import json
 import orjson
 import inspect

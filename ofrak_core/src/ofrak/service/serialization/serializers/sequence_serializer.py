@@ -1,8 +1,8 @@
 from collections.abc import Sequence, Iterable
 from typing import Any, List, Union
+from typing import get_origin, get_args
 
 from beartype import beartype
-from typing_inspect import get_origin, get_args
 
 from ofrak.service.serialization.pjson_types import PJSONType
 from ofrak.service.serialization.serializers.serializer_i import SerializerInterface
