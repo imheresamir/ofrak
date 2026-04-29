@@ -1,6 +1,11 @@
 import asyncio
 from concurrent.futures.process import ProcessPoolExecutor
 from dataclasses import dataclass
+import json
+import os
+import shutil
+import subprocess
+import tempfile
 from typing import Dict
 
 from ofrak.resource import ResourceFactory, Resource
@@ -10,12 +15,7 @@ from ofrak.model.resource_model import ResourceAttributes
 from ofrak.component.abstract import ComponentMissingDependencyError
 from ofrak.component.analyzer import Analyzer
 
-try:
-    import binwalk
-
-    BINWALK_INSTALLED = True
-except ImportError:
-    BINWALK_INSTALLED = False
+BINWALK_INSTALLED = shutil.which("binwalk") is not None
 
 from ofrak.core.binary import GenericBinary
 from ofrak.model.component_model import ComponentExternalTool
@@ -83,7 +83,28 @@ class BinwalkAnalyzer(Analyzer[None, BinwalkAttributes]):
 
 def _run_binwalk_on_file(filename):  # pragma: no cover
     offsets = dict()
-    for module in binwalk.scan(filename, signature=True):
-        for result in module.results:
-            offsets[result.offset] = result.description
-    return offsets
+    with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tmp:
+        json_path = tmp.name
+    try:
+        subprocess.run(
+            ["binwalk", "--log", json_path, filename],
+            capture_output=False,
+            text=True,
+            check=True
+        )
+        with open(json_path, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            analysis = data[0].get("Analysis", {})
+            file_map = analysis.get("file_map", [])
+        else:
+            file_map = []
+        for entry in file_map:
+            offset = entry.get("offset") or entry.get("decimal") or 0
+            description = entry.get("description", "")
+            if offset:
+                offsets[offset] = description
+        return offsets
+    finally:
+        if os.path.exists(json_path):
+            os.unlink(json_path)

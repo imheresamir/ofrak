@@ -7,7 +7,7 @@ install: src/ofrak/gui/public
 .PHONY: develop
 develop: src/ofrak/gui/public
 	$(MAKE) -C keystone/bindings/python install3
-	$(PYTHON) -m pip install -r requirements.txt -r requirements-docs.txt -r requirements-non-pypi.txt -r requirements-test.txt
+	$(PYTHON) -m pip install -r requirements.txt -r requirements-docs.txt -r requirements-test.txt
 	$(PYTHON) -m pip install -e . --config-settings editable_mode=compat
 
 .PHONY: inspect
