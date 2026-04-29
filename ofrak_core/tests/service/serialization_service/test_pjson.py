@@ -32,7 +32,7 @@ from ofrak.resource_view import ResourceView
 from ofrak.service.component_locator_i import ComponentFilter
 
 from synthol.injector import DependencyInjector
-from typing_inspect import get_args
+from typing import get_args
 
 from ofrak import ResourceTag
 from ofrak.core.addressable import Addressable
@@ -274,6 +274,12 @@ def test_to_pjson(obj: Any, type_hint: Any, _test_serialize_deserialize):
     - Various enum implementations with different underlying types serialize correctly
     """
     _test_serialize_deserialize(obj, type_hint)
+
+
+def test_to_pjson_optional_os_stat_result(_test_serialize_deserialize):
+    """Regression test for Python 3.14 PEP 604 optional union type hints."""
+    obj = os.stat_result((0, 0, 0, 0, 0, 0, 0, 0, 0, 0))
+    _test_serialize_deserialize(obj, os.stat_result | None)
 
 
 @pytest.mark.parametrize(

@@ -1,8 +1,8 @@
 from typing import Type, Any
+from typing import get_origin
 
 import inspect
 import sys
-from typing_inspect import get_origin
 
 from ofrak.service.serialization.serializers.serializer_i import SerializerInterface
 

@@ -1,9 +1,9 @@
 from collections import defaultdict
 from typing import Any, List, Set, Tuple, cast, Callable
 from typing import Dict, Optional
+from typing import get_origin
 
 from sortedcontainers import SortedList
-from typing_inspect import get_origin
 
 from ofrak import ResourceTag
 from ofrak.model.resource_model import ResourceIndexedAttribute

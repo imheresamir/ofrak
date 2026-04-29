@@ -1,6 +1,5 @@
 from typing import Any, Type, Dict
-
-from typing_inspect import get_origin
+from typing import get_origin
 
 from ofrak.model.resource_model import ResourceIndexedAttribute, ResourceAttributes
 from ofrak.service.serialization.pjson_types import PJSONType

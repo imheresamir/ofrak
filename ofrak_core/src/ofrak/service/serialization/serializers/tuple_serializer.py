@@ -1,7 +1,7 @@
 from typing import Any, Tuple, Union, List, Callable
+from typing import get_origin, get_args
 
 from beartype import beartype
-from typing_inspect import get_origin, get_args
 
 from ofrak.service.serialization.serializers.serializer_i import SerializerInterface
 

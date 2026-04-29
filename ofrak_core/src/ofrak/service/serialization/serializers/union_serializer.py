@@ -1,9 +1,9 @@
 from typing import Union, Any, Callable
+from typing import get_origin, get_args
 
 from beartype import beartype
 from beartype.roar import BeartypeCallHintParamViolation
 from typeguard import check_type
-from typing_inspect import get_origin, get_args
 
 from ofrak.service.serialization.pjson_types import PJSONType
 from ofrak.service.serialization.serializers.serializer_i import SerializerInterface

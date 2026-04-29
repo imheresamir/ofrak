@@ -1,6 +1,5 @@
 from typing import Any, List, Set, FrozenSet
-
-from typing_inspect import get_origin, get_args
+from typing import get_origin, get_args
 
 from ofrak.service.serialization.pjson_types import PJSONType
 from ofrak.service.serialization.serializers.serializer_i import SerializerInterface
